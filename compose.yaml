@@ -1,0 +1,57 @@
+name: ai-tools-omniroute
+
+services:
+  ai-tools-omniroute:
+    image: ${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:latest}
+    container_name: ai-tools-omniroute
+    restart: unless-stopped
+    stop_grace_period: 40s
+    ports:
+      - "${OMNIROUTE_PUBLIC_PORT:-20128}:20128"
+    environment:
+      NODE_ENV: ${OMNIROUTE_NODE_ENV:-production}
+      PORT: "20128"
+      HOSTNAME: "0.0.0.0"
+      DATA_DIR: /app/data
+      JWT_SECRET: ${OMNIROUTE_JWT_SECRET:?Set OMNIROUTE_JWT_SECRET in .env}
+      API_KEY_SECRET: ${OMNIROUTE_API_KEY_SECRET:?Set OMNIROUTE_API_KEY_SECRET in .env}
+      INITIAL_PASSWORD: ${OMNIROUTE_INITIAL_PASSWORD:?Set OMNIROUTE_INITIAL_PASSWORD in .env}
+      OMNIROUTE_WS_BRIDGE_SECRET: ${OMNIROUTE_WS_BRIDGE_SECRET:?Set OMNIROUTE_WS_BRIDGE_SECRET in .env}
+      STORAGE_ENCRYPTION_KEY: ${OMNIROUTE_STORAGE_ENCRYPTION_KEY:-}
+      STORAGE_ENCRYPTION_KEY_VERSION: ${OMNIROUTE_STORAGE_ENCRYPTION_KEY_VERSION:-v1}
+      REQUIRE_API_KEY: ${OMNIROUTE_REQUIRE_API_KEY:-false}
+      AUTH_COOKIE_SECURE: ${OMNIROUTE_AUTH_COOKIE_SECURE:-false}
+      APP_LOG_TO_FILE: ${OMNIROUTE_APP_LOG_TO_FILE:-true}
+      OMNIROUTE_MEMORY_MB: ${OMNIROUTE_MEMORY_MB:-512}
+    volumes:
+      - ai-tools-omniroute-data:/app/data
+    networks:
+      - ai-tools-omniroute-network
+
+  ai-tools-omniroute-openwebui:
+    image: ${OPENWEBUI_IMAGE:-openwebui/open-webui:main}
+    container_name: ai-tools-omniroute-openwebui
+    restart: unless-stopped
+    stop_grace_period: 40s
+    depends_on:
+      - ai-tools-omniroute
+    ports:
+      - "${OPENWEBUI_PUBLIC_PORT:-20000}:8080"
+    environment:
+      OPENAI_API_BASE_URL: http://ai-tools-omniroute:20128/v1
+      OPENAI_API_KEY: ${OMNIROUTE_OPENAI_API_KEY:-omniroute-local}
+      WEBUI_SECRET_KEY: ${OPENWEBUI_SECRET_KEY:?Set OPENWEBUI_SECRET_KEY in .env}
+    volumes:
+      - ai-tools-omniroute-openwebui-data:/app/backend/data
+    networks:
+      - ai-tools-omniroute-network
+
+volumes:
+  ai-tools-omniroute-data:
+    name: ai-tools-omniroute-data
+  ai-tools-omniroute-openwebui-data:
+    name: ai-tools-omniroute-openwebui-data
+
+networks:
+  ai-tools-omniroute-network:
+    name: ai-tools-omniroute-network

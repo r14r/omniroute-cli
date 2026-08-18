@@ -1,0 +1,8 @@
+.venv
+
+.envrc
+.set_env.sh
+
+.release-project
+.release-source
+.release-version
