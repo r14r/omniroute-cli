@@ -13,7 +13,7 @@ just build
 ./bin/omniroute-cli status
 ```
 
-Or install the CLI into `~/.local/bin`:
+Or install the CLI into `/usr/local/bin`:
 
 ```bash
 just install

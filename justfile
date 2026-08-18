@@ -47,19 +47,17 @@ build: check
 cli *args: build
     ./bin/omniroute-cli {{args}}
 
-# Install CLI; default destination is ~/.local/bin
-install install_dir="": build
+# Install CLI; default destination is /usr/local/bin/omniroute-cli
+install install_dir="/usr/local/bin": build
     @dir="{{install_dir}}"; \
-      if [ -z "$dir" ]; then dir="$HOME/.local/bin"; fi; \
       mkdir -p "$dir"; \
       cp bin/omniroute-cli "$dir/omniroute-cli"; \
       chmod 755 "$dir/omniroute-cli"; \
       echo "Installed $dir/omniroute-cli"
 
-# Remove CLI from ~/.local/bin or supplied directory
-uninstall install_dir="":
+# Remove CLI from /usr/local/bin or supplied directory
+uninstall install_dir="/usr/local/bin":
     @dir="{{install_dir}}"; \
-      if [ -z "$dir" ]; then dir="$HOME/.local/bin"; fi; \
       rm -f "$dir/omniroute-cli"; \
       echo "Removed $dir/omniroute-cli"
 
