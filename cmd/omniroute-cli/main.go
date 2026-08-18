@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/r14r/omniroute-cli/internal/cli"
+	"github.com/r14r/omniroute-cli/src/cli"
 )
 
 var version = "dev"

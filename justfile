@@ -15,21 +15,21 @@ init:
         chmod 600 .env; \
         echo "Created .env from .env.example"; \
     fi; \
-    if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$$' .env; then \
-        sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env; \
+    if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$' .env; then \
+        sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env; \
         rm -f .env.bak; \
         echo "Migrated Open WebUI image tag: main -> latest"; \
     fi
 
 # Verify Go formatting and run tests
 check:
-    @files="$$(gofmt -l ./cmd ./internal)"; \
-      if [ -n "$$files" ]; then echo "Files require gofmt:"; echo "$$files"; exit 1; fi
+    @files="$(gofmt -l ./cmd ./src)"; \
+      if [ -n "$files" ]; then echo "Files require gofmt:"; echo "$files"; exit 1; fi
     go test ./...
 
 # Format Go source
 fmt:
-    gofmt -w ./cmd ./internal
+    gofmt -w ./cmd ./src
 
 # Run Go tests
 test:
@@ -38,10 +38,10 @@ test:
 # Build ./bin/omniroute-cli with VERSION embedded
 build: check
     @mkdir -p bin
-    @version="$$(cat VERSION)"; \
-      go build -trimpath -ldflags "-s -w -X main.version=$$version" \
+    @version="$(cat VERSION)"; \
+      go build -trimpath -ldflags "-s -w -X main.version=$version" \
         -o bin/omniroute-cli ./cmd/omniroute-cli
-    @echo "Built bin/omniroute-cli v$$(cat VERSION)"
+    @echo "Built bin/omniroute-cli v$(cat VERSION)"
 
 # Run the Go CLI. Example: just cli status
 cli *args: build
@@ -50,18 +50,18 @@ cli *args: build
 # Install CLI; default destination is ~/.local/bin
 install install_dir="": build
     @dir="{{install_dir}}"; \
-      if [ -z "$$dir" ]; then dir="$$HOME/.local/bin"; fi; \
-      mkdir -p "$$dir"; \
-      cp bin/omniroute-cli "$$dir/omniroute-cli"; \
-      chmod 755 "$$dir/omniroute-cli"; \
-      echo "Installed $$dir/omniroute-cli"
+      if [ -z "$dir" ]; then dir="$HOME/.local/bin"; fi; \
+      mkdir -p "$dir"; \
+      cp bin/omniroute-cli "$dir/omniroute-cli"; \
+      chmod 755 "$dir/omniroute-cli"; \
+      echo "Installed $dir/omniroute-cli"
 
 # Remove CLI from ~/.local/bin or supplied directory
 uninstall install_dir="":
     @dir="{{install_dir}}"; \
-      if [ -z "$$dir" ]; then dir="$$HOME/.local/bin"; fi; \
-      rm -f "$$dir/omniroute-cli"; \
-      echo "Removed $$dir/omniroute-cli"
+      if [ -z "$dir" ]; then dir="$HOME/.local/bin"; fi; \
+      rm -f "$dir/omniroute-cli"; \
+      echo "Removed $dir/omniroute-cli"
 
 # Validate the Docker Compose configuration
 config: init
@@ -147,8 +147,8 @@ shell-openwebui:
 # Print configured public URLs
 urls: init
     @. ./.env; \
-      echo "OmniRoute:  http://localhost:$${OMNIROUTE_PUBLIC_PORT:-20128}"; \
-      echo "Open WebUI: http://localhost:$${OPENWEBUI_PUBLIC_PORT:-20000}"
+      echo "OmniRoute:  http://localhost:${OMNIROUTE_PUBLIC_PORT:-20128}"; \
+      echo "Open WebUI: http://localhost:${OPENWEBUI_PUBLIC_PORT:-20000}"
 
 # Show resolved Compose service names
 services:
@@ -176,7 +176,7 @@ backup-omniroute:
         -v ai-tools-omniroute-data:/data:ro \
         -v "${PWD}/backups:/backup" \
         alpine:latest \
-        sh -c 'tar czf /backup/ai-tools-omniroute-$$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
+        sh -c 'tar czf /backup/ai-tools-omniroute-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
 
 # Back up Open WebUI data to ./backups
 backup-openwebui:
@@ -185,7 +185,7 @@ backup-openwebui:
         -v ai-tools-omniroute-openwebui-data:/data:ro \
         -v "${PWD}/backups:/backup" \
         alpine:latest \
-        sh -c 'tar czf /backup/ai-tools-omniroute-openwebui-$$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
+        sh -c 'tar czf /backup/ai-tools-omniroute-openwebui-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
 
 # Remove containers/network and unused images; KEEP persistent application data
 clean:
@@ -196,7 +196,7 @@ clean:
 clean-all:
     @printf 'This deletes all ai-tools-omniroute data. Type DELETE to continue: '; \
     read answer; \
-    if [ "$$answer" = "DELETE" ]; then \
+    if [ "$answer" = "DELETE" ]; then \
         docker compose down -v --remove-orphans; \
     else \
         echo "Cancelled"; \
@@ -205,11 +205,11 @@ clean-all:
 
 # Create a versioned source ZIP; includes .env.example, excludes runtime data
 release: check
-    @version="$$(cat VERSION)"; \
+    @version="$(cat VERSION)"; \
       mkdir -p dist; \
-      archive="dist/omniroute-cli-v$$version.zip"; \
-      rm -f "$$archive"; \
-      zip -qr "$$archive" . \
+      archive="dist/omniroute-cli-v$version.zip"; \
+      rm -f "$archive"; \
+      zip -qr "$archive" . \
         -x '.git/*' '.env' 'bin/*' 'dist/*' 'backups/*' '.DS_Store'; \
-      unzip -t "$$archive" >/dev/null; \
-      echo "Created $$archive"
+      unzip -t "$archive" >/dev/null; \
+      echo "Created $archive"

@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/r14r/omniroute-cli/internal/compose"
-	"github.com/r14r/omniroute-cli/internal/config"
+	"github.com/r14r/omniroute-cli/src/compose"
+	"github.com/r14r/omniroute-cli/src/config"
 )
 
 const (
