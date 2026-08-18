@@ -29,7 +29,7 @@ services:
       - ai-tools-omniroute-network
 
   ai-tools-omniroute-openwebui:
-    image: ${OPENWEBUI_IMAGE:-openwebui/open-webui:main}
+    image: ${OPENWEBUI_IMAGE:-openwebui/open-webui:latest}
     container_name: ai-tools-omniroute-openwebui
     restart: unless-stopped
     stop_grace_period: 40s

@@ -54,6 +54,16 @@ tasks:
             - not:
                 fileExists: .env
 
+      - name: Migrate obsolete Open WebUI Docker Hub tag
+        shell: |
+          if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$' .env; then
+            sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env
+            rm -f .env.bak
+            echo "Migrated Open WebUI image tag: main -> latest"
+          fi
+        when:
+          fileExists: .env
+
   validate:
     requires: [prepare-env]
     steps:
@@ -65,9 +75,15 @@ tasks:
   pull:
     requires: [validate]
     steps:
-      - name: Pull latest Docker images
+      - name: Pull OmniRoute image
         dockerCompose:
           action: pull
+          args: [ai-tools-omniroute]
+
+      - name: Pull Open WebUI image
+        dockerCompose:
+          action: pull
+          args: [ai-tools-omniroute-openwebui]
 
   rebuild:
     requires: [pull]

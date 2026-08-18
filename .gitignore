@@ -6,3 +6,7 @@
 .release-project
 .release-source
 .release-version
+.env
+
+backups/
+.DS_Store

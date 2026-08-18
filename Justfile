@@ -1,16 +1,19 @@
-set dotenv-load := true
-
 # Show available commands
 default:
     @just --list
 
-# Copy .env.example to .env when .env does not exist
+# Create .env when missing and migrate obsolete defaults
 init:
     @if [ -f .env ]; then \
         echo ".env already exists"; \
     else \
         cp .env.example .env; \
         echo "Created .env from .env.example"; \
+    fi; \
+    if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$$' .env; then \
+        sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env; \
+        rm -f .env.bak; \
+        echo "Migrated Open WebUI image tag: main -> latest"; \
     fi
 
 # Validate the Docker Compose configuration
@@ -19,7 +22,8 @@ config: init
 
 # Pull images and create/start the complete stack
 up: init
-    docker compose pull
+    docker compose pull ai-tools-omniroute
+    docker compose pull ai-tools-omniroute-openwebui
     docker compose up -d --remove-orphans
 
 # Alias for up
@@ -69,13 +73,15 @@ log service="":
         docker compose logs --tail=200; \
     fi
 
-# Pull latest service images
+# Pull latest service images separately for clearer errors
 pull: init
-    docker compose pull
+    docker compose pull ai-tools-omniroute
+    docker compose pull ai-tools-omniroute-openwebui
 
 # Pull images and recreate containers; keep persistent volumes
 update: init
-    docker compose pull
+    docker compose pull ai-tools-omniroute
+    docker compose pull ai-tools-omniroute-openwebui
     docker compose down --remove-orphans
     docker compose up -d --force-recreate --remove-orphans
 
@@ -101,6 +107,18 @@ urls: init
 # Show resolved Compose service names
 services:
     docker compose config --services
+
+# Show the exact images Compose resolves after applying .env
+resolved-images: init
+    docker compose config --images
+
+# Validate configuration and show resolved services/images
+doctor: init
+    docker compose config --quiet
+    @echo "Services:"
+    @docker compose config --services
+    @echo "Images:"
+    @docker compose config --images
 
 # Back up both persistent data volumes
 backup: backup-omniroute backup-openwebui
