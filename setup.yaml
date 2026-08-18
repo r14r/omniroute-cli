@@ -1,0 +1,109 @@
+schemaVersion: 2
+
+project:
+  name: ai-tools-omniroute
+  type: docker-compose
+  description: Pull OmniRoute and Open WebUI images and recreate the ai-tools-omniroute Docker Compose stack.
+
+defaults:
+  timeout: 20m
+  failFast: true
+
+requirements:
+  commands:
+    - docker
+
+workflows:
+  setup:
+    tasks: [rebuild]
+  update:
+    tasks: [rebuild]
+  rebuild:
+    tasks: [rebuild]
+  pull:
+    tasks: [pull]
+  start:
+    tasks: [start]
+  stop:
+    tasks: [stop]
+  status:
+    tasks: [status]
+
+tasks:
+  prepare-env:
+    steps:
+      - name: Create .env from .env.example when missing
+        copy:
+          source: .env.example
+          target: .env
+          overwrite: false
+        when:
+          all:
+            - fileExists: .env.example
+            - not:
+                fileExists: .env
+
+      - name: Create .env from visible env.example fallback
+        copy:
+          source: env.example
+          target: .env
+          overwrite: false
+        when:
+          all:
+            - fileExists: env.example
+            - not:
+                fileExists: .env
+
+  validate:
+    requires: [prepare-env]
+    steps:
+      - name: Validate Docker Compose configuration
+        dockerCompose:
+          action: config
+          args: [--quiet]
+
+  pull:
+    requires: [validate]
+    steps:
+      - name: Pull latest Docker images
+        dockerCompose:
+          action: pull
+
+  rebuild:
+    requires: [pull]
+    steps:
+      - name: Stop and remove existing containers
+        dockerCompose:
+          action: down
+          removeOrphans: true
+
+      - name: Recreate and start containers
+        dockerCompose:
+          action: up
+          detach: true
+          removeOrphans: true
+          args: [--force-recreate]
+
+      - name: Show container status
+        dockerCompose:
+          action: ps
+
+  start:
+    requires: [validate]
+    steps:
+      - name: Start existing containers
+        dockerCompose:
+          action: start
+
+  stop:
+    steps:
+      - name: Stop containers
+        dockerCompose:
+          action: stop
+
+  status:
+    requires: [validate]
+    steps:
+      - name: Show container status
+        dockerCompose:
+          action: ps
