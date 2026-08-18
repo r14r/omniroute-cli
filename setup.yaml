@@ -3,7 +3,7 @@ schemaVersion: 2
 project:
   name: ai-tools-omniroute
   type: docker-compose
-  description: Build omniroute-cli, pull OmniRoute/Open WebUI images and recreate the ai-tools-omniroute stack.
+  description: Build omniroute-cli, securely initialize configuration, pull images and recreate the ai-tools-omniroute stack.
 
 defaults:
   timeout: 20m
@@ -12,9 +12,7 @@ defaults:
 requirements:
   commands:
     - docker
-  optionalCommands:
     - go
-    - just
 
 workflows:
   setup:
@@ -39,37 +37,11 @@ workflows:
 tasks:
   prepare-env:
     steps:
-      - name: Create .env from .env.example when missing
-        copy:
-          source: .env.example
-          target: .env
-          overwrite: false
-        when:
-          all:
-            - fileExists: .env.example
-            - not:
-                fileExists: .env
-
-      - name: Create .env from visible env.example fallback
-        copy:
-          source: env.example
-          target: .env
-          overwrite: false
-        when:
-          all:
-            - fileExists: env.example
-            - not:
-                fileExists: .env
-
-      - name: Migrate obsolete Open WebUI Docker Hub tag
+      - name: Securely initialize or protect .env
         shell: |
-          if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$' .env; then
-            sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env
-            rm -f .env.bak
-            echo "Migrated Open WebUI image tag: main -> latest"
-          fi
-        when:
-          fileExists: .env
+          VERSION="$(cat VERSION)"
+          go run -ldflags "-X main.version=${VERSION}" ./cmd/omniroute-cli init
+          chmod 600 .env
 
   validate:
     requires: [prepare-env]
@@ -81,27 +53,36 @@ tasks:
 
   check-cli:
     steps:
+      - name: Validate semantic version
+        shell: |
+          VERSION="$(cat VERSION)"
+          echo "${VERSION}" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
+
+      - name: Check Go formatting
+        shell: |
+          FILES="$(gofmt -l ./cmd ./src)"
+          test -z "${FILES}" || { echo "Files require gofmt:"; echo "${FILES}"; exit 1; }
+
+      - name: Run go vet
+        command:
+          exec: go
+          args: [vet, ./...]
+
       - name: Run Go tests
         command:
           exec: go
           args: [test, ./...]
-        when:
-          commandExists: go
 
   build-cli:
     requires: [check-cli]
     steps:
       - name: Create binary directory
         mkdir: bin
-        when:
-          commandExists: go
 
       - name: Build omniroute-cli
         shell: |
           VERSION="$(cat VERSION)"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o bin/omniroute-cli ./cmd/omniroute-cli
-        when:
-          commandExists: go
 
   pull:
     requires: [validate]
@@ -119,12 +100,7 @@ tasks:
   rebuild:
     requires: [pull]
     steps:
-      - name: Stop and remove existing containers
-        dockerCompose:
-          action: down
-          removeOrphans: true
-
-      - name: Recreate and start containers
+      - name: Recreate and start containers without explicit downtime
         dockerCompose:
           action: up
           detach: true

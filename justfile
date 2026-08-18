@@ -6,25 +6,23 @@ default:
 version:
     @cat VERSION
 
-# Create .env when missing and migrate obsolete defaults
-init:
-    @if [ -f .env ]; then \
-        echo ".env already exists"; \
-    else \
-        cp .env.example .env; \
-        chmod 600 .env; \
-        echo "Created .env from .env.example"; \
-    fi; \
-    if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$' .env; then \
-        sed -i.bak 's#^OPENWEBUI_IMAGE=openwebui/open-webui:main$#OPENWEBUI_IMAGE=openwebui/open-webui:latest#' .env; \
-        rm -f .env.bak; \
-        echo "Migrated Open WebUI image tag: main -> latest"; \
-    fi
+# Validate VERSION as Semantic Versioning
+check-version:
+    @version="$(cat VERSION)"; \
+      echo "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' || { \
+        echo "Invalid semantic VERSION: $version" >&2; exit 1; \
+      }
 
-# Verify Go formatting and run tests
-check:
+# Securely create/protect .env and migrate obsolete non-secret defaults
+init:
+    @version="$(cat VERSION)"; \
+      go run -ldflags "-X main.version=$version" ./cmd/omniroute-cli init
+
+# Verify formatting, vet, tests and semantic version
+check: check-version
     @files="$(gofmt -l ./cmd ./src)"; \
       if [ -n "$files" ]; then echo "Files require gofmt:"; echo "$files"; exit 1; fi
+    go vet ./...
     go test ./...
 
 # Format Go source
@@ -61,11 +59,11 @@ uninstall install_dir="/usr/local/bin":
       rm -f "$dir/omniroute-cli"; \
       echo "Removed $dir/omniroute-cli"
 
-# Validate the Docker Compose configuration
-config: init
+# Validate the existing Docker Compose configuration; does not create .env
+config:
     docker compose config
 
-# Pull images and create/start the complete stack
+# Pull images and create/start the complete stack; creates .env if missing
 up: init
     docker compose pull ai-tools-omniroute
     docker compose pull ai-tools-omniroute-openwebui
@@ -123,12 +121,12 @@ pull: init
     docker compose pull ai-tools-omniroute
     docker compose pull ai-tools-omniroute-openwebui
 
-# Pull images and recreate containers; keep persistent volumes
+# Pull images and recreate containers without an explicit down; keep persistent volumes
 update: init
     docker compose pull ai-tools-omniroute
     docker compose pull ai-tools-omniroute-openwebui
-    docker compose down --remove-orphans
     docker compose up -d --force-recreate --remove-orphans
+    docker compose ps
 
 # Force recreation without pulling images
 recreate: init
@@ -142,9 +140,9 @@ shell-omniroute:
 shell-openwebui:
     docker compose exec ai-tools-omniroute-openwebui sh
 
-# Print configured public URLs
-urls: init
-    @. ./.env; \
+# Print configured public URLs without creating .env
+urls:
+    @if [ -f .env ]; then . ./.env; fi; \
       echo "OmniRoute:  http://localhost:${OMNIROUTE_PUBLIC_PORT:-20128}"; \
       echo "Open WebUI: http://localhost:${OPENWEBUI_PUBLIC_PORT:-20000}"
 
@@ -153,16 +151,12 @@ services:
     docker compose config --services
 
 # Show the exact images Compose resolves after applying .env
-resolved-images: init
+resolved-images:
     docker compose config --images
 
-# Validate configuration and show resolved services/images
-doctor: init
-    docker compose config --quiet
-    @echo "Services:"
-    @docker compose config --services
-    @echo "Images:"
-    @docker compose config --images
+# Build CLI and run security/config diagnostics
+doctor: build
+    ./bin/omniroute-cli doctor
 
 # Back up both persistent data volumes
 backup: backup-omniroute backup-openwebui
@@ -185,9 +179,12 @@ backup-openwebui:
         alpine:latest \
         sh -c 'tar czf /backup/ai-tools-omniroute-openwebui-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
 
-# Remove containers/network and unused images; KEEP persistent application data
+# Remove containers/network only; KEEP volumes and unrelated Docker images
 clean:
     docker compose down --remove-orphans
+
+# Explicit global Docker image prune
+prune:
     docker image prune -f
 
 # Remove containers, network AND persistent volumes. DELETES ALL APPLICATION DATA.
@@ -201,13 +198,14 @@ clean-all:
         exit 1; \
     fi
 
-# Create a versioned source ZIP; includes .env.example, excludes runtime data
+# Create a reproducible ZIP from committed Git files only
 release: check
+    @git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "release requires a Git checkout" >&2; exit 1; }
+    @git diff --quiet && git diff --cached --quiet || { echo "Commit tracked changes before creating a release" >&2; exit 1; }
     @version="$(cat VERSION)"; \
       mkdir -p dist; \
       archive="dist/omniroute-cli-v$version.zip"; \
       rm -f "$archive"; \
-      zip -qr "$archive" . \
-        -x '.git/*' '.env' 'bin/*' 'dist/*' 'backups/*' '.DS_Store'; \
+      git archive --format=zip --prefix="omniroute-cli-v$version/" --output="$archive" HEAD; \
       unzip -t "$archive" >/dev/null; \
       echo "Created $archive"

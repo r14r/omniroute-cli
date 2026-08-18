@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,10 +44,20 @@ func (a *app) run(args []string) error {
 	fs.StringVar(&a.dir, "project-dir", ".", "project directory containing compose.yaml")
 	fs.StringVar(&a.file, "compose-file", "compose.yaml", "Docker Compose file relative to project directory")
 	fs.BoolVar(&a.dryRun, "dry-run", false, "print Docker commands without executing them")
+	var showVersion bool
+	fs.BoolVar(&showVersion, "version", false, "print CLI version")
+	fs.BoolVar(&showVersion, "v", false, "print CLI version")
 	fs.Usage = func() { a.printUsage(a.errOut) }
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
+	}
+	if showVersion {
+		fmt.Fprintf(a.out, "omniroute-cli %s\n", normalizeVersion(a.version))
+		return nil
 	}
 
 	rest := fs.Args()
@@ -70,7 +81,10 @@ func (a *app) run(args []string) error {
 
 	command := rest[0]
 	commandArgs := rest[1:]
-	if command != "help" && command != "version" && command != "init" && command != "urls" {
+	if !knownCommand(command) {
+		return fmt.Errorf("unknown command %q; run 'omniroute-cli help'", command)
+	}
+	if command != "help" && command != "version" && command != "init" && command != "urls" && command != "prune" {
 		if err := a.runner.ValidateFiles(); err != nil {
 			return err
 		}
@@ -91,7 +105,7 @@ func (a *app) run(args []string) error {
 	case "init":
 		return a.initEnv()
 	case "config":
-		if err := a.prepare(); err != nil {
+		if err := a.validateConfig(false); err != nil {
 			return err
 		}
 		return a.runner.Compose("config")
@@ -114,22 +128,22 @@ func (a *app) run(args []string) error {
 	case "recreate":
 		return a.recreate()
 	case "status", "ps":
-		if err := a.prepare(); err != nil {
+		if err := a.validateConfig(false); err != nil {
 			return err
 		}
 		return a.runner.Compose("ps")
 	case "images":
-		if err := a.prepare(); err != nil {
+		if err := a.validateConfig(false); err != nil {
 			return err
 		}
 		return a.runner.Compose("images")
 	case "services":
-		if err := a.prepare(); err != nil {
+		if err := a.validateConfig(false); err != nil {
 			return err
 		}
 		return a.runner.Compose("config", "--services")
 	case "resolved-images":
-		if err := a.prepare(); err != nil {
+		if err := a.validateConfig(false); err != nil {
 			return err
 		}
 		return a.runner.Compose("config", "--images")
@@ -141,6 +155,8 @@ func (a *app) run(args []string) error {
 		return a.urls()
 	case "clean":
 		return a.clean()
+	case "prune":
+		return a.prune()
 	case "clean-all":
 		return a.cleanAll(commandArgs)
 	default:
@@ -158,6 +174,7 @@ Global options:
   --project-dir DIR      Project directory (default: .)
   --compose-file FILE    Compose file (default: compose.yaml)
   --dry-run              Print commands without executing Docker
+  --version, -v          Print CLI version
 
 Commands:
   init                   Create .env from .env.example when missing
@@ -167,7 +184,7 @@ Commands:
   restart [SERVICE...]   Restart containers
   down                   Remove containers/network; keep volumes
   pull                   Pull both service images
-  update                 Pull, down and force-recreate the stack
+  update                 Pull and force-recreate the stack without explicit down
   rebuild                Alias for update
   recreate               Force-recreate without pulling images
   status | ps            Show container status
@@ -180,7 +197,8 @@ Commands:
   urls                   Show public OmniRoute/Open WebUI URLs
   config                 Render resolved Docker Compose configuration
   doctor                 Validate Docker, Compose, config, services and images
-  clean                  Down stack and prune unused images
+  clean                  Down stack; keep volumes and unrelated Docker images
+  prune                  Explicitly prune unused Docker images globally
   clean-all --yes        Delete stack INCLUDING persistent volumes
   version                Print CLI version
   help                   Show this help
@@ -220,18 +238,37 @@ func (a *app) initEnv() error {
 	default:
 		fmt.Fprintln(a.out, ".env already exists")
 	}
+	if len(result.InsecureKeys) > 0 {
+		fmt.Fprintf(a.errOut, "WARNING: .env contains legacy public secret values: %s\n", strings.Join(result.InsecureKeys, ", "))
+		fmt.Fprintln(a.errOut, "Rotate these values deliberately; automatic rotation is disabled to avoid invalidating encrypted data or sessions.")
+	}
 	return nil
 }
 
-func (a *app) validateConfig() error {
-	if err := a.prepare(); err != nil {
+func (a *app) requireEnv() error {
+	envPath := filepath.Join(a.dir, ".env")
+	if _, err := os.Stat(envPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New(".env does not exist; run 'omniroute-cli init' first")
+		}
+		return fmt.Errorf("stat .env: %w", err)
+	}
+	return nil
+}
+
+func (a *app) validateConfig(createEnv bool) error {
+	if createEnv {
+		if err := a.prepare(); err != nil {
+			return err
+		}
+	} else if err := a.requireEnv(); err != nil {
 		return err
 	}
 	return a.runner.Compose("config", "--quiet")
 }
 
 func (a *app) composeWithOptionalServices(action string, args []string) error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
 	resolved, err := resolveServices(args)
@@ -244,7 +281,7 @@ func (a *app) composeWithOptionalServices(action string, args []string) error {
 }
 
 func (a *app) up() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(true); err != nil {
 		return err
 	}
 	if err := a.pullServices(); err != nil {
@@ -254,14 +291,14 @@ func (a *app) up() error {
 }
 
 func (a *app) down() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
 	return a.runner.Compose("down", "--remove-orphans")
 }
 
 func (a *app) pull() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(true); err != nil {
 		return err
 	}
 	return a.pullServices()
@@ -275,13 +312,10 @@ func (a *app) pullServices() error {
 }
 
 func (a *app) update() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(true); err != nil {
 		return err
 	}
 	if err := a.pullServices(); err != nil {
-		return err
-	}
-	if err := a.runner.Compose("down", "--remove-orphans"); err != nil {
 		return err
 	}
 	if err := a.runner.Compose("up", "-d", "--force-recreate", "--remove-orphans"); err != nil {
@@ -291,14 +325,14 @@ func (a *app) update() error {
 }
 
 func (a *app) recreate() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(true); err != nil {
 		return err
 	}
 	return a.runner.Compose("up", "-d", "--force-recreate", "--remove-orphans")
 }
 
 func (a *app) logs(followDefault bool, args []string) error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -334,7 +368,7 @@ func (a *app) logs(followDefault bool, args []string) error {
 }
 
 func (a *app) shell(args []string) error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
 	if len(args) > 1 {
@@ -352,12 +386,16 @@ func (a *app) shell(args []string) error {
 }
 
 func (a *app) urls() error {
-	if err := a.prepare(); err != nil {
-		return err
-	}
-	values, err := config.LoadEnv(filepath.Join(a.dir, ".env"))
-	if err != nil {
-		return fmt.Errorf("read .env: %w", err)
+	values := map[string]string{}
+	envPath := filepath.Join(a.dir, ".env")
+	if _, err := os.Stat(envPath); err == nil {
+		loaded, err := config.LoadEnv(envPath)
+		if err != nil {
+			return fmt.Errorf("read .env: %w", err)
+		}
+		values = loaded
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat .env: %w", err)
 	}
 	omniPort := values["OMNIROUTE_PUBLIC_PORT"]
 	if omniPort == "" {
@@ -379,9 +417,17 @@ func (a *app) doctor() error {
 	if err := a.runner.CheckDocker(); err != nil {
 		return err
 	}
-	if err := a.prepare(); err != nil {
+	if err := a.requireEnv(); err != nil {
 		return err
 	}
+	values, err := config.LoadEnv(filepath.Join(a.dir, ".env"))
+	if err != nil {
+		return fmt.Errorf("read .env: %w", err)
+	}
+	if insecure := config.FindLegacyPublishedSecrets(values); len(insecure) > 0 {
+		return fmt.Errorf("insecure legacy public secrets detected in .env: %s", strings.Join(insecure, ", "))
+	}
+	fmt.Fprintln(a.out, "Security: OK (no known legacy public secrets)")
 	fmt.Fprintln(a.out, "\nDocker Compose:")
 	if err := a.runner.CheckCompose(); err != nil {
 		return err
@@ -400,11 +446,17 @@ func (a *app) doctor() error {
 }
 
 func (a *app) clean() error {
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
-	if err := a.runner.Compose("down", "--remove-orphans"); err != nil {
-		return err
+	return a.runner.Compose("down", "--remove-orphans")
+}
+
+func (a *app) prune() error {
+	if !a.dryRun {
+		if err := a.runner.CheckDocker(); err != nil {
+			return err
+		}
 	}
 	return a.runner.Run("image", "prune", "-f")
 }
@@ -419,10 +471,19 @@ func (a *app) cleanAll(args []string) error {
 	if !*yes {
 		return errors.New("clean-all deletes persistent volumes; rerun with --yes")
 	}
-	if err := a.validateConfig(); err != nil {
+	if err := a.validateConfig(false); err != nil {
 		return err
 	}
 	return a.runner.Compose("down", "-v", "--remove-orphans")
+}
+
+func knownCommand(command string) bool {
+	switch command {
+	case "help", "version", "init", "config", "doctor", "start", "stop", "restart", "up", "run", "down", "pull", "update", "rebuild", "recreate", "status", "ps", "images", "services", "resolved-images", "logs", "log", "shell", "urls", "clean", "prune", "clean-all":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveServices(values []string) ([]string, error) {
