@@ -2,12 +2,17 @@
 default:
     @just --list
 
+# Show project version
+version:
+    @cat VERSION
+
 # Create .env when missing and migrate obsolete defaults
 init:
     @if [ -f .env ]; then \
         echo ".env already exists"; \
     else \
         cp .env.example .env; \
+        chmod 600 .env; \
         echo "Created .env from .env.example"; \
     fi; \
     if grep -q '^OPENWEBUI_IMAGE=openwebui/open-webui:main$$' .env; then \
@@ -15,6 +20,48 @@ init:
         rm -f .env.bak; \
         echo "Migrated Open WebUI image tag: main -> latest"; \
     fi
+
+# Verify Go formatting and run tests
+check:
+    @files="$$(gofmt -l ./cmd ./internal)"; \
+      if [ -n "$$files" ]; then echo "Files require gofmt:"; echo "$$files"; exit 1; fi
+    go test ./...
+
+# Format Go source
+fmt:
+    gofmt -w ./cmd ./internal
+
+# Run Go tests
+test:
+    go test ./...
+
+# Build ./bin/omniroute-cli with VERSION embedded
+build: check
+    @mkdir -p bin
+    @version="$$(cat VERSION)"; \
+      go build -trimpath -ldflags "-s -w -X main.version=$$version" \
+        -o bin/omniroute-cli ./cmd/omniroute-cli
+    @echo "Built bin/omniroute-cli v$$(cat VERSION)"
+
+# Run the Go CLI. Example: just cli status
+cli *args: build
+    ./bin/omniroute-cli {{args}}
+
+# Install CLI; default destination is ~/.local/bin
+install install_dir="": build
+    @dir="{{install_dir}}"; \
+      if [ -z "$$dir" ]; then dir="$$HOME/.local/bin"; fi; \
+      mkdir -p "$$dir"; \
+      cp bin/omniroute-cli "$$dir/omniroute-cli"; \
+      chmod 755 "$$dir/omniroute-cli"; \
+      echo "Installed $$dir/omniroute-cli"
+
+# Remove CLI from ~/.local/bin or supplied directory
+uninstall install_dir="":
+    @dir="{{install_dir}}"; \
+      if [ -z "$$dir" ]; then dir="$$HOME/.local/bin"; fi; \
+      rm -f "$$dir/omniroute-cli"; \
+      echo "Removed $$dir/omniroute-cli"
 
 # Validate the Docker Compose configuration
 config: init
@@ -85,7 +132,6 @@ update: init
     docker compose down --remove-orphans
     docker compose up -d --force-recreate --remove-orphans
 
-
 # Force recreation without pulling images
 recreate: init
     docker compose up -d --force-recreate --remove-orphans
@@ -150,9 +196,20 @@ clean:
 clean-all:
     @printf 'This deletes all ai-tools-omniroute data. Type DELETE to continue: '; \
     read answer; \
-    if [ "$${answer}" = "DELETE" ]; then \
+    if [ "$$answer" = "DELETE" ]; then \
         docker compose down -v --remove-orphans; \
     else \
         echo "Cancelled"; \
         exit 1; \
     fi
+
+# Create a versioned source ZIP; includes .env.example, excludes runtime data
+release: check
+    @version="$$(cat VERSION)"; \
+      mkdir -p dist; \
+      archive="dist/omniroute-cli-v$$version.zip"; \
+      rm -f "$$archive"; \
+      zip -qr "$$archive" . \
+        -x '.git/*' '.env' 'bin/*' 'dist/*' 'backups/*' '.DS_Store'; \
+      unzip -t "$$archive" >/dev/null; \
+      echo "Created $$archive"
