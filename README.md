@@ -18,6 +18,8 @@ omniroute-cli status
 
 `.env` is never committed. On first initialization, `omniroute-cli init` reads `.env.example`, generates unique cryptographically secure values for all secret placeholders, writes `.env` with mode `0600`, and migrates obsolete non-secret defaults.
 
+OmniRoute upstream documents `123456` as its fallback initial dashboard password. This project lists that value only for reference; `omniroute-cli init` generates a unique `OMNIROUTE_INITIAL_PASSWORD` instead.
+
 Services bind to localhost by default:
 
 ```dotenv
@@ -75,9 +77,11 @@ Persistent volumes are retained except with `clean-all --yes`.
 
 ## Global CLI options
 
+The stack definition is `docker-compose.yaml`.
+
 ```text
---project-dir DIR      project directory containing compose.yaml
---compose-file FILE    Compose file, default compose.yaml
+--project-dir DIR      project directory containing docker-compose.yaml
+--compose-file FILE    Compose file, default docker-compose.yaml
 --dry-run              print Docker commands without executing them
 --version, -v          print CLI version
 ```

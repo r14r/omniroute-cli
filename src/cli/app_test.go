@@ -60,7 +60,7 @@ func TestInitCreatesEnvAndUpdateAvoidsExplicitDown(t *testing.T) {
 		t.Fatalf("update code=%d stderr=%q", code, errOut.String())
 	}
 	text := out.String()
-	if strings.Contains(text, " compose -f compose.yaml down ") || strings.Contains(text, " compose -f compose.yaml down\n") {
+	if strings.Contains(text, " compose -f docker-compose.yaml down ") || strings.Contains(text, " compose -f docker-compose.yaml down\n") {
 		t.Fatalf("update must not explicitly down the stack:\n%s", text)
 	}
 	if !strings.Contains(text, "up -d --force-recreate --remove-orphans") {
@@ -86,7 +86,7 @@ func TestServiceAliasInDryRun(t *testing.T) {
 func writeProjectFiles(t *testing.T, dir string) {
 	t.Helper()
 	compose := "name: test\nservices:\n  ai-tools-omniroute:\n    image: example/omniroute:latest\n  ai-tools-omniroute-openwebui:\n    image: example/openwebui:latest\n"
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yaml"), []byte(compose), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	template := strings.Join([]string{

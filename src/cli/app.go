@@ -41,8 +41,8 @@ func Run(args []string, version string, out, errOut io.Writer) int {
 func (a *app) run(args []string) error {
 	fs := flag.NewFlagSet("omniroute-cli", flag.ContinueOnError)
 	fs.SetOutput(a.errOut)
-	fs.StringVar(&a.dir, "project-dir", ".", "project directory containing compose.yaml")
-	fs.StringVar(&a.file, "compose-file", "compose.yaml", "Docker Compose file relative to project directory")
+	fs.StringVar(&a.dir, "project-dir", ".", "project directory containing docker-compose.yaml")
+	fs.StringVar(&a.file, "compose-file", "docker-compose.yaml", "Docker Compose file relative to project directory")
 	fs.BoolVar(&a.dryRun, "dry-run", false, "print Docker commands without executing them")
 	var showVersion bool
 	fs.BoolVar(&showVersion, "version", false, "print CLI version")
@@ -172,7 +172,7 @@ Usage:
 
 Global options:
   --project-dir DIR      Project directory (default: .)
-  --compose-file FILE    Compose file (default: compose.yaml)
+  --compose-file FILE    Compose file (default: docker-compose.yaml)
   --dry-run              Print commands without executing Docker
   --version, -v          Print CLI version
 
