@@ -18,7 +18,7 @@ omniroute-cli status
 
 `.env` is never committed. On first initialization, `omniroute-cli init` reads `.env.example`, generates unique cryptographically secure values for all secret placeholders, writes `.env` with mode `0600`, and migrates obsolete non-secret defaults.
 
-OmniRoute upstream documents `123456` as its fallback initial dashboard password. This project lists that value only for reference; `omniroute-cli init` generates a unique `OMNIROUTE_INITIAL_PASSWORD` instead.
+OmniRoute upstream documents `123456` as its fallback initial dashboard password. `.env.example` shows that upstream value explicitly, while `omniroute-cli init` replaces it with a unique generated `OMNIROUTE_INITIAL_PASSWORD` in `.env`.
 
 Services bind to localhost by default:
 

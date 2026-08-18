@@ -14,7 +14,10 @@ import (
 	"strings"
 )
 
-const generatePlaceholder = "__GENERATE__"
+const (
+	generatePlaceholder     = "__GENERATE__"
+	upstreamInitialPassword = "123456"
+)
 
 var generatedSecretBytes = map[string]int{
 	"OMNIROUTE_JWT_SECRET":             48,
@@ -96,7 +99,21 @@ func EnsureEnv(projectDir string) (EnsureResult, error) {
 }
 
 func FindLegacyPublishedSecrets(values map[string]string) []string {
-	return findHashedSecrets(values, legacyPublishedSecretHashes)
+	keys := findHashedSecrets(values, legacyPublishedSecretHashes)
+	if values["OMNIROUTE_INITIAL_PASSWORD"] == upstreamInitialPassword {
+		found := false
+		for _, key := range keys {
+			if key == "OMNIROUTE_INITIAL_PASSWORD" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			keys = append(keys, "OMNIROUTE_INITIAL_PASSWORD")
+			sort.Strings(keys)
+		}
+	}
+	return keys
 }
 
 func findHashedSecrets(values map[string]string, hashes map[string]string) []string {
@@ -149,10 +166,15 @@ func renderSecureTemplate(template string) (string, error) {
 	lines := strings.Split(template, "\n")
 	for i, line := range lines {
 		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(value) != generatePlaceholder {
+		if !ok {
 			continue
 		}
 		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		shouldGenerate := value == generatePlaceholder || (key == "OMNIROUTE_INITIAL_PASSWORD" && value == upstreamInitialPassword)
+		if !shouldGenerate {
+			continue
+		}
 		var generated string
 		var err error
 		if key == "OMNIROUTE_INITIAL_PASSWORD" {
@@ -168,8 +190,15 @@ func renderSecureTemplate(template string) (string, error) {
 		lines[i] = key + "=" + generated
 	}
 	rendered := strings.Join(lines, "\n")
-	if strings.Contains(rendered, generatePlaceholder) {
-		return "", errors.New("unresolved generated secret placeholder remains in .env.example")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		_, value, ok := strings.Cut(line, "=")
+		if ok && strings.TrimSpace(value) == generatePlaceholder {
+			return "", errors.New("unresolved generated secret placeholder remains in .env.example")
+		}
 	}
 	return rendered, nil
 }

@@ -107,3 +107,35 @@ func TestFindHashedSecrets(t *testing.T) {
 		t.Fatalf("unexpected insecure keys: %v", got)
 	}
 }
+
+func TestUpstreamInitialPasswordIsReplaced(t *testing.T) {
+	template := "OMNIROUTE_INITIAL_PASSWORD=123456\n"
+	rendered, err := renderSecureTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, "OMNIROUTE_INITIAL_PASSWORD=123456") {
+		t.Fatalf("upstream initial password was not replaced: %q", rendered)
+	}
+}
+
+func TestUpstreamInitialPasswordIsReportedInsecure(t *testing.T) {
+	keys := FindLegacyPublishedSecrets(map[string]string{"OMNIROUTE_INITIAL_PASSWORD": "123456"})
+	if len(keys) != 1 || keys[0] != "OMNIROUTE_INITIAL_PASSWORD" {
+		t.Fatalf("unexpected insecure keys: %v", keys)
+	}
+}
+
+func TestGenerateTokenInCommentDoesNotFail(t *testing.T) {
+	template := "# literal __GENERATE__ token in documentation\nOMNIROUTE_INITIAL_PASSWORD=123456\n"
+	rendered, err := renderSecureTemplate(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "# literal __GENERATE__ token in documentation") {
+		t.Fatalf("comment changed unexpectedly: %q", rendered)
+	}
+	if strings.Contains(rendered, "OMNIROUTE_INITIAL_PASSWORD=123456") {
+		t.Fatalf("upstream password was not replaced: %q", rendered)
+	}
+}
