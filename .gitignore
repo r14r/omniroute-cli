@@ -8,5 +8,7 @@
 .release-version
 .env
 
+bin/
+dist/
 backups/
 .DS_Store
