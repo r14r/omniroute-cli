@@ -111,16 +111,20 @@ The ZIP contains a matching top-level directory `omniroute-cli-v<version>/` and 
 
 ## update-cli integration
 
-`setup.yaml` uses schema 2. Go and Docker are required because secure environment initialization is implemented by `omniroute-cli` itself.
+The schema-version-2 update manifest is stored as **`update-cli.yam`**. Go and Docker are required because secure environment initialization is implemented by `omniroute-cli` itself.
+
+The current Update CLI 1.0.2 auto-detects only `setup.yaml` / `setup.yml`, so this custom manifest filename must be passed explicitly with `--setup-manifest`:
 
 ```bash
-update-cli --setup
-update-cli --setup-workflow update
-update-cli --setup-workflow rebuild
-update-cli --setup-workflow build-cli
-update-cli --setup-workflow check-cli
-update-cli --setup-workflow status
+update-cli --setup-manifest update-cli.yam
+update-cli --setup-manifest update-cli.yam --setup-workflow update
+update-cli --setup-manifest update-cli.yam --setup-workflow rebuild
+update-cli --setup-manifest update-cli.yam --setup-workflow build-cli
+update-cli --setup-manifest update-cli.yam --setup-workflow check-cli
+update-cli --setup-manifest update-cli.yam --setup-workflow status
 ```
+
+Do not use bare `update-cli setup` for this project unless Update CLI is later changed to auto-detect `update-cli.yam`.
 
 ## CI
 
