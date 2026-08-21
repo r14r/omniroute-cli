@@ -23,6 +23,8 @@ workflows:
     tasks: [recreate-stack]
   build-cli:
     tasks: [build-cli]
+  install-cli:
+    tasks: [install-cli]
   check-cli:
     tasks: [check-cli]
   pull:
@@ -78,8 +80,21 @@ tasks:
       - name: Pull configured images through omniroute-cli
         shell: ./bin/omniroute-cli --timeout 15m pull
 
-  update-stack:
+  install-cli:
     requires: [build-cli]
+    steps:
+      - name: Install current omniroute-cli system-wide
+        shell: |
+          TARGET=/usr/local/bin/omniroute-cli
+          if [ -w /usr/local/bin ]; then
+            install -m 0755 bin/omniroute-cli "${TARGET}"
+          else
+            sudo install -m 0755 bin/omniroute-cli "${TARGET}"
+          fi
+          "${TARGET}" --version
+
+  update-stack:
+    requires: [install-cli]
     steps:
       - name: Transactional image update with health verification and rollback
         shell: ./bin/omniroute-cli --timeout 15m update --wait 2m
