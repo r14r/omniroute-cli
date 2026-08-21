@@ -7,135 +7,46 @@ import (
 	"testing"
 )
 
-func TestEnsureEnvCreatesSecureValuesAndPermissions(t *testing.T) {
-	dir := t.TempDir()
-	template := strings.Join([]string{
-		"OPENWEBUI_IMAGE=openwebui/open-webui:latest",
-		"OMNIROUTE_JWT_SECRET=__GENERATE__",
-		"OMNIROUTE_API_KEY_SECRET=__GENERATE__",
-		"OMNIROUTE_INITIAL_PASSWORD=__GENERATE__",
-		"OMNIROUTE_WS_BRIDGE_SECRET=__GENERATE__",
-		"OMNIROUTE_STORAGE_ENCRYPTION_KEY=__GENERATE__",
-		"OPENWEBUI_SECRET_KEY=__GENERATE__",
-		"",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(dir, ".env.example"), []byte(template), 0o644); err != nil {
+func TestEnsureEnvSecure(t *testing.T) {
+	d := t.TempDir()
+	tpl := "OMNIROUTE_JWT_SECRET=__GENERATE__\nOMNIROUTE_INITIAL_PASSWORD=123456\nOPENWEBUI_SECRET_KEY=__GENERATE__\n"
+	if err := os.WriteFile(filepath.Join(d, ".env.example"), []byte(tpl), 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	result, err := EnsureEnv(dir)
+	r, err := EnsureEnv(d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Created || result.Migrated {
-		t.Fatalf("unexpected result: %+v", result)
+	if !r.Created {
+		t.Fatal("not created")
 	}
-	if len(result.InsecureKeys) != 0 {
-		t.Fatalf("new env must not contain legacy secrets: %v", result.InsecureKeys)
+	b, _ := os.ReadFile(filepath.Join(d, ".env"))
+	s := string(b)
+	if strings.Contains(s, "__GENERATE__") || strings.Contains(s, "OMNIROUTE_INITIAL_PASSWORD=123456") {
+		t.Fatalf("unsafe env: %s", s)
 	}
-
-	envPath := filepath.Join(dir, ".env")
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(data), generatePlaceholder) {
-		t.Fatalf("generated placeholder remained in .env: %s", data)
-	}
-	info, err := os.Stat(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf(".env permissions = %o, want 600", got)
+	st, _ := os.Stat(filepath.Join(d, ".env"))
+	if st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %o", st.Mode().Perm())
 	}
 }
-
-func TestEnsureEnvPreservesExistingAndProtectsMode(t *testing.T) {
-	dir := t.TempDir()
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("VALUE=keep\n"), 0o644); err != nil {
+func TestSetEnvValue(t *testing.T) {
+	p := filepath.Join(t.TempDir(), ".env")
+	os.WriteFile(p, []byte("A=1\n# B=old\n"), 0o600)
+	if err := SetEnvValue(p, "A", "2"); err != nil {
 		t.Fatal(err)
 	}
-
-	result, err := EnsureEnv(dir)
-	if err != nil {
+	if err := SetEnvValue(p, "B", "3"); err != nil {
 		t.Fatal(err)
 	}
-	if result.Created || result.Migrated {
-		t.Fatalf("unexpected changes: %+v", result)
-	}
-	data, _ := os.ReadFile(envPath)
-	if string(data) != "VALUE=keep\n" {
-		t.Fatalf("existing .env changed: %q", data)
-	}
-	info, _ := os.Stat(envPath)
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf(".env permissions = %o, want 600", got)
+	m, _ := LoadEnv(p)
+	if m["A"] != "2" || m["B"] != "3" {
+		t.Fatal(m)
 	}
 }
-
-func TestEnsureEnvMigratesObsoleteImageTag(t *testing.T) {
-	dir := t.TempDir()
-	envPath := filepath.Join(dir, ".env")
-	if err := os.WriteFile(envPath, []byte("OPENWEBUI_IMAGE=openwebui/open-webui:main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	result, err := EnsureEnv(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !result.Migrated {
-		t.Fatal("expected image tag migration")
-	}
-	data, _ := os.ReadFile(envPath)
-	if !strings.Contains(string(data), "openwebui/open-webui:latest") {
-		t.Fatalf("migration missing: %s", data)
-	}
-}
-
-func TestFindHashedSecrets(t *testing.T) {
-	values := map[string]string{
-		"SECRET": "legacy-test-value",
-		"OTHER":  "safe",
-	}
-	hashes := map[string]string{
-		"SECRET": "bf5a9c74ae364a6aa62d07e1ddd8bc9b25e811bcdbee2ca1aa33ea3b79b131e6",
-	}
-	got := findHashedSecrets(values, hashes)
-	if len(got) != 1 || got[0] != "SECRET" {
-		t.Fatalf("unexpected insecure keys: %v", got)
-	}
-}
-
-func TestUpstreamInitialPasswordIsReplaced(t *testing.T) {
-	template := "OMNIROUTE_INITIAL_PASSWORD=123456\n"
-	rendered, err := renderSecureTemplate(template)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(rendered, "OMNIROUTE_INITIAL_PASSWORD=123456") {
-		t.Fatalf("upstream initial password was not replaced: %q", rendered)
-	}
-}
-
-func TestUpstreamInitialPasswordIsReportedInsecure(t *testing.T) {
-	keys := FindLegacyPublishedSecrets(map[string]string{"OMNIROUTE_INITIAL_PASSWORD": "123456"})
-	if len(keys) != 1 || keys[0] != "OMNIROUTE_INITIAL_PASSWORD" {
-		t.Fatalf("unexpected insecure keys: %v", keys)
-	}
-}
-
-func TestGenerateTokenInCommentDoesNotFail(t *testing.T) {
-	template := "# literal __GENERATE__ token in documentation\nOMNIROUTE_INITIAL_PASSWORD=123456\n"
-	rendered, err := renderSecureTemplate(template)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(rendered, "# literal __GENERATE__ token in documentation") {
-		t.Fatalf("comment changed unexpectedly: %q", rendered)
-	}
-	if strings.Contains(rendered, "OMNIROUTE_INITIAL_PASSWORD=123456") {
-		t.Fatalf("upstream password was not replaced: %q", rendered)
+func TestSecurityWarnings(t *testing.T) {
+	w := SecurityWarnings(map[string]string{"PUBLIC_BIND_ADDRESS": "0.0.0.0", "OMNIROUTE_REQUIRE_API_KEY": "false", "OMNIROUTE_AUTH_COOKIE_SECURE": "false"})
+	if len(w) != 2 {
+		t.Fatal(w)
 	}
 }

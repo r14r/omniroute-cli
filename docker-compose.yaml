@@ -1,9 +1,9 @@
-name: ai-tools-omniroute
+name: ${COMPOSE_PROJECT_NAME:-ai-tools-omniroute}
 
 services:
   ai-tools-omniroute:
     image: ${OMNIROUTE_IMAGE:-diegosouzapw/omniroute:latest}
-    container_name: ai-tools-omniroute
+    container_name: ${OMNIROUTE_PREFIX:-ai-tools-omniroute}
     restart: unless-stopped
     stop_grace_period: 40s
     ports:
@@ -27,14 +27,24 @@ services:
       - ai-tools-omniroute-data:/app/data
     networks:
       - ai-tools-omniroute-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://127.0.0.1:20128/api/monitoring/health').then(r=>process.exit(r.status < 500 ? 0 : 1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
 
   ai-tools-omniroute-openwebui:
     image: ${OPENWEBUI_IMAGE:-openwebui/open-webui:latest}
-    container_name: ai-tools-omniroute-openwebui
+    container_name: ${OMNIROUTE_PREFIX:-ai-tools-omniroute}-openwebui
     restart: unless-stopped
     stop_grace_period: 40s
     depends_on:
-      - ai-tools-omniroute
+      ai-tools-omniroute:
+        condition: service_healthy
     ports:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:${OPENWEBUI_PUBLIC_PORT:-20000}:8080"
     environment:
@@ -45,13 +55,22 @@ services:
       - ai-tools-omniroute-openwebui-data:/app/backend/data
     networks:
       - ai-tools-omniroute-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4); raise SystemExit(0 if r.status < 500 else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
 
 volumes:
   ai-tools-omniroute-data:
-    name: ai-tools-omniroute-data
+    name: ${OMNIROUTE_PREFIX:-ai-tools-omniroute}-data
   ai-tools-omniroute-openwebui-data:
-    name: ai-tools-omniroute-openwebui-data
+    name: ${OMNIROUTE_PREFIX:-ai-tools-omniroute}-openwebui-data
 
 networks:
   ai-tools-omniroute-network:
-    name: ai-tools-omniroute-network
+    name: ${OMNIROUTE_PREFIX:-ai-tools-omniroute}-network

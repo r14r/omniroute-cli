@@ -1,6 +1,8 @@
 # omniroute-cli
 
-Go CLI and Docker Compose stack for running **OmniRoute** together with **Open WebUI** under the `ai-tools-omniroute` prefix.
+Current release: **v0.6.0**
+
+`omniroute-cli` is a Go operations CLI and Docker Compose stack for running **OmniRoute** together with **Open WebUI**. The Go CLI is the authoritative runtime control plane; the `justfile` and `update-cli.yam` delegate operational behavior to it to avoid lifecycle drift.
 
 ## Quick start
 
@@ -12,13 +14,27 @@ omniroute-cli up
 omniroute-cli status
 ```
 
-`just install` installs to `/usr/local/bin/omniroute-cli` by default. A different directory can be supplied explicitly.
+`just install` installs to `/usr/local/bin/omniroute-cli` by default.
 
-## Secure configuration
+## Semantic Versioning
 
-`.env` is never committed. On first initialization, `omniroute-cli init` reads `.env.example`, generates unique cryptographically secure values for all secret placeholders, writes `.env` with mode `0600`, and migrates obsolete non-secret defaults.
+Project and build versions follow Semantic Versioning. Runtime code does not compare or sort versions as raw strings: the CLI uses its own SemVer parser/type (`src/semver`) for `major.minor.patch`, prerelease identifiers, build metadata, and precedence comparisons.
 
-OmniRoute upstream documents `123456` as its fallback initial dashboard password. `.env.example` shows that upstream value explicitly, while `omniroute-cli init` replaces it with a unique generated `OMNIROUTE_INITIAL_PASSWORD` in `.env`.
+`VERSION` currently contains:
+
+```text
+0.6.0
+```
+
+Build scripts validate it through the same Go SemVer implementation:
+
+```bash
+go run ./cmd/semver-check "$(cat VERSION)"
+```
+
+## Secure initialization
+
+`.env` is never committed. `omniroute-cli init` reads `.env.example`, replaces generated placeholders with cryptographically random values, replaces OmniRoute's public initial password `123456` with a unique password, and writes `.env` with mode `0600`.
 
 Services bind to localhost by default:
 
@@ -28,111 +44,284 @@ OMNIROUTE_PUBLIC_PORT=20128
 OPENWEBUI_PUBLIC_PORT=20000
 ```
 
-Set `PUBLIC_BIND_ADDRESS=0.0.0.0` only when LAN/public exposure is intentional and appropriate authentication/network controls are in place.
+`doctor` and `secrets check` flag dangerous combinations such as public binding with API-key enforcement disabled or insecure cookies.
 
-**Upgrade note:** releases before v0.2.0 published fixed example secrets. Existing `.env` files are not auto-rotated because changing storage/session keys can invalidate encrypted data or sessions. `omniroute-cli doctor` detects those known legacy values so they can be rotated deliberately.
+## Global options
 
-## CLI commands
+Global options may be placed before or after the command:
+
+```text
+--project-dir DIR       project directory, default .
+--compose-file FILE     default docker-compose.yaml
+--project-name NAME     Compose project/container/volume prefix
+--prefix NAME           alias for --project-name
+--timeout DURATION      per-operation timeout, default 2m
+--json                  machine-readable JSON output
+--dry-run               print Docker operations without executing
+--version, -v           semantic CLI version
+```
+
+Examples:
+
+```bash
+omniroute-cli status --json
+omniroute-cli update --timeout 15m
+omniroute-cli --project-name omniroute-dev up
+```
+
+## Lifecycle commands
 
 ```text
 omniroute-cli init
-omniroute-cli up
-omniroute-cli start [omniroute|openwebui]
-omniroute-cli stop [omniroute|openwebui]
-omniroute-cli restart [omniroute|openwebui]
-omniroute-cli down
+omniroute-cli up | run
 omniroute-cli pull
-omniroute-cli update
-omniroute-cli rebuild
+omniroute-cli update [--plan] [--wait 2m]
+omniroute-cli rollback [--previous]
 omniroute-cli recreate
-omniroute-cli status
-omniroute-cli logs [-f] [--tail N] [omniroute|openwebui]
-omniroute-cli log [--tail N] [omniroute|openwebui]
-omniroute-cli images
-omniroute-cli services
-omniroute-cli resolved-images
-omniroute-cli shell [omniroute|openwebui]
-omniroute-cli urls
-omniroute-cli config
-omniroute-cli doctor
+omniroute-cli start [SERVICE...]
+omniroute-cli stop [SERVICE...]
+omniroute-cli restart [SERVICE...]
+omniroute-cli down
 omniroute-cli clean
-omniroute-cli prune
 omniroute-cli clean-all --yes
-omniroute-cli version
-omniroute-cli --version
+omniroute-cli prune
 ```
 
-`update`/`rebuild` validates the configuration, pulls both images and runs:
+### Start versus update
+
+`up` does **not** pull from a registry. It only makes the configured stack run:
 
 ```bash
-docker compose up -d --force-recreate --remove-orphans
-docker compose ps
+docker compose up -d --remove-orphans
 ```
 
-It intentionally does **not** run `docker compose down` first, reducing avoidable downtime and leaving the existing stack running if image pulling fails.
+Use `pull` explicitly to fetch images, or `update` for the complete update path.
 
-`clean` removes only this Compose stack's containers/network. Global image pruning is available only through the explicit `prune` command.
+### Transactional image update and rollback
 
-Persistent volumes are retained except with `clean-all --yes`.
+Preview without mutation:
 
-## Global CLI options
+```bash
+omniroute-cli update --plan
+```
 
-The stack definition is `docker-compose.yaml`.
+An update performs:
 
 ```text
---project-dir DIR      project directory containing docker-compose.yaml
---compose-file FILE    Compose file, default docker-compose.yaml
---dry-run              print Docker commands without executing them
---version, -v          print CLI version
+validate configuration
+capture current immutable image digests
+store .omniroute-cli/rollback.json
+pull configured images
+force-recreate containers
+wait for HTTP health
+success -> keep new images
+failure -> recreate previous digests automatically
 ```
 
-Read-only commands such as `status`, `logs`, `images` and `services` do not create or modify `.env`.
+Manual rollback:
 
-## Development
+```bash
+omniroute-cli rollback --previous
+```
+
+Rollback state is local and ignored by Git. No application-data backup or restore feature is implemented in the Go CLI.
+
+## Health, readiness and diagnostics
+
+```bash
+omniroute-cli health
+omniroute-cli health --deep
+omniroute-cli health --wait 2m
+omniroute-cli doctor
+omniroute-cli doctor --deep
+omniroute-cli status
+omniroute-cli status --json
+```
+
+OmniRoute health uses `/api/monitoring/health`. When management authentication is enabled, set an appropriate management credential:
+
+```dotenv
+OMNIROUTE_MANAGEMENT_TOKEN=oma_live_...
+```
+
+For least privilege, use a scoped OmniRoute Access Token. Ordinary inference keys do not automatically authorize `/api/*` management routes.
+
+Open WebUI is probed through `/health`; deep checks additionally use `/ready`. Docker Compose also defines container healthchecks, and Open WebUI waits for OmniRoute's container health before startup.
+
+## Runtime information
+
+```text
+omniroute-cli status
+omniroute-cli top
+omniroute-cli images
+omniroute-cli resolved-images
+omniroute-cli services
+omniroute-cli urls
+omniroute-cli info
+omniroute-cli logs [-f] [--tail N] [SERVICE]
+omniroute-cli log [--tail N] [SERVICE]
+omniroute-cli shell [SERVICE]
+omniroute-cli compose-config
+```
+
+Service aliases:
+
+```text
+omniroute
+openwebui
+open-webui
+```
+
+## Configuration management
+
+`config` now manages `.env`; raw Compose rendering moved to `compose-config`.
+
+```bash
+omniroute-cli config list
+omniroute-cli config get OMNIROUTE_PUBLIC_PORT
+omniroute-cli config set OMNIROUTE_PUBLIC_PORT 21128
+omniroute-cli config validate
+omniroute-cli config path
+```
+
+Secret values are redacted and cannot be changed through `config set`.
+
+## Secret management
+
+```bash
+omniroute-cli secrets check
+omniroute-cli secrets rotate jwt
+omniroute-cli secrets rotate api
+omniroute-cli secrets rotate initial-password
+omniroute-cli secrets rotate ws
+omniroute-cli secrets rotate openwebui
+omniroute-cli secrets rotate --safe --yes
+```
+
+Storage encryption rotation is deliberately guarded:
+
+```bash
+omniroute-cli secrets rotate storage --yes
+```
+
+Changing the storage encryption key can make existing encrypted data unreadable unless a proper migration is performed. `--safe` explicitly excludes the storage key, but can still invalidate sessions/tokens and therefore requires `--yes`.
+
+## OmniRoute API commands
+
+The CLI exposes useful OmniRoute operational endpoints:
+
+```bash
+omniroute-cli models list
+omniroute-cli providers status
+omniroute-cli sessions
+omniroute-cli usage
+omniroute-cli cache stats
+omniroute-cli cache clear --yes
+```
+
+`models list` uses the OpenAI-compatible `/v1/models?prefix=alias` endpoint. Management commands use the current OmniRoute `/api/*` management endpoints and `OMNIROUTE_MANAGEMENT_TOKEN` when configured.
+
+All of these can use `--json`.
+
+## Multi-instance operation
+
+`docker-compose.yaml` parameterizes the Compose project, container names, volumes and network through the prefix. The default remains `ai-tools-omniroute`.
+
+Example second installation:
+
+```bash
+omniroute-cli --project-dir ./dev --project-name omniroute-dev up
+```
+
+The prefix affects Compose project isolation plus container/volume/network names. Use different published ports in each project's `.env`.
+
+## Shell completion
+
+```bash
+omniroute-cli completion bash
+omniroute-cli completion zsh
+omniroute-cli completion fish
+```
+
+Redirect the generated completion into the appropriate shell completion location.
+
+## `just` development workflow
 
 ```bash
 just fmt
 just test
 just check
 just build
+just install
 ```
 
-`just check` validates Semantic Versioning, formatting, `go vet` and all tests. The project has no third-party Go dependencies.
+Operational recipes delegate to the Go CLI:
 
-## Releases
-
-`VERSION` uses Semantic Versioning. `just release` requires a clean Git checkout and creates a reproducible archive from **committed files only**:
-
-```text
-dist/omniroute-cli-v<MAJOR.MINOR.PATCH>.zip
+```bash
+just up
+just update-plan
+just update
+just rollback
+just status
+just health
+just health-deep
+just doctor
 ```
 
-The ZIP contains a matching top-level directory `omniroute-cli-v<version>/` and never includes local ignored files such as `.env`.
+The existing `backup`, `backup-omniroute`, and `backup-openwebui` recipes are retained only as developer convenience helpers. Backup/restore is intentionally not part of the Go CLI scope.
 
 ## update-cli integration
 
-The schema-version-2 update manifest is stored as **`update-cli.yam`**. Go and Docker are required because secure environment initialization is implemented by `omniroute-cli` itself.
+The schema-version-2 manifest is named exactly:
 
-The current Update CLI 1.0.2 auto-detects only `setup.yaml` / `setup.yml`, so this custom manifest filename must be passed explicitly with `--setup-manifest`:
+```text
+update-cli.yam
+```
+
+The currently verified Update CLI auto-detects only `setup.yaml` / `setup.yml`, so pass the custom filename explicitly:
 
 ```bash
 update-cli --setup-manifest update-cli.yam
 update-cli --setup-manifest update-cli.yam --setup-workflow update
 update-cli --setup-manifest update-cli.yam --setup-workflow rebuild
-update-cli --setup-manifest update-cli.yam --setup-workflow build-cli
-update-cli --setup-manifest update-cli.yam --setup-workflow check-cli
 update-cli --setup-manifest update-cli.yam --setup-workflow status
+update-cli --setup-manifest update-cli.yam --setup-workflow doctor
 ```
 
-Do not use bare `update-cli setup` for this project unless Update CLI is later changed to auto-detect `update-cli.yam`.
+The manifest no longer duplicates Docker lifecycle behavior. It builds `omniroute-cli` and delegates update/start/stop/status/doctor operations to the binary.
 
 ## CI
 
-GitHub Actions checks every push and pull request for:
+GitHub Actions validates:
 
-- Semantic Version validity
+- SemVer through the Go parser
 - `gofmt`
 - `go vet`
-- `go test ./...`
-- successful binary build
-- CLI help/version smoke tests
+- `go test -race ./...`
+- Linux and macOS tests
+- CLI build and smoke tests
+- secure `.env` generation
+- `docker compose config --quiet`
+- `justfile` loading
+- `update-cli.yam` YAML syntax
+- secret scanning
+- `govulncheck`
+
+## Releases
+
+`just release` creates the source ZIP from committed files only:
+
+```text
+dist/omniroute-cli-v<SEMVER>.zip
+```
+
+A tag matching `v<SEMVER>` triggers the release workflow, which builds:
+
+```text
+linux/amd64
+linux/arm64
+darwin/amd64
+darwin/arm64
+```
+
+and publishes archives plus SHA-256 checksums to GitHub Releases.

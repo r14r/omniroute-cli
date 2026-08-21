@@ -1,13 +1,11 @@
 .venv
-
 .envrc
 .set_env.sh
-
 .release-project
 .release-source
 .release-version
 .env
-
+.omniroute-cli/
 bin/
 dist/
 backups/

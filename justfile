@@ -1,233 +1,113 @@
-# Show available commands
 default:
     @just --list
 
-# Show project version
 version:
-    @cat VERSION
+    @go run ./cmd/semver-check "$(cat VERSION)"
 
-# Validate VERSION as Semantic Versioning
 check-version:
-    @version="$(cat VERSION)"; \
-      echo "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$' || { \
-        echo "Invalid semantic VERSION: $version" >&2; exit 1; \
-      }
+    @go run ./cmd/semver-check "$(cat VERSION)" >/dev/null
 
-# Securely create/protect .env and migrate obsolete non-secret defaults
-init:
-    @version="$(cat VERSION)"; \
-      go run -ldflags "-X main.version=$version" ./cmd/omniroute-cli init
-
-# Verify formatting, vet, tests and semantic version
-check: check-version
-    @files="$(gofmt -l ./cmd ./src)"; \
-      if [ -n "$files" ]; then echo "Files require gofmt:"; echo "$files"; exit 1; fi
-    go vet ./...
-    go test ./...
-
-# Format Go source
 fmt:
     gofmt -w ./cmd ./src
 
-# Run Go tests
 test:
     go test ./...
 
-# Build the Go CLI as ./bin/omniroute-cli with VERSION embedded
+check: check-version
+    @files="$(gofmt -l ./cmd ./src)"; test -z "$files" || { echo "Files require gofmt:"; echo "$files"; exit 1; }
+    go vet ./...
+    go test -race ./...
+
 build: check
     @mkdir -p bin
     @rm -f bin/omniroute-cli
     @version="$(cat VERSION)"; \
-      go build -trimpath -ldflags "-s -w -X main.version=$version" \
-        -o bin/omniroute-cli ./cmd/omniroute-cli; \
+      go build -trimpath -ldflags "-s -w -X main.version=$version" -o bin/omniroute-cli ./cmd/omniroute-cli; \
       actual="$(./bin/omniroute-cli --version)"; \
       expected="omniroute-cli v$version"; \
-      if [ "$actual" != "$expected" ]; then \
-        echo "Version check failed: expected '$expected', got '$actual'" >&2; \
-        rm -f bin/omniroute-cli; \
-        exit 1; \
-      fi; \
+      test "$actual" = "$expected" || { echo "Version mismatch: $actual != $expected" >&2; exit 1; }; \
       echo "Built bin/omniroute-cli v$version"
 
-# Install the CLI. Default: /usr/local/bin/omniroute-cli
 install install_dir="/usr/local/bin": build
-    @dir="{{install_dir}}"; \
-      target="$dir/omniroute-cli"; \
-      if [ ! -d "$dir" ]; then \
-        mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir"; \
-      fi; \
-      if [ -w "$dir" ]; then \
-        install -m 0755 bin/omniroute-cli "$target"; \
-      else \
-        sudo install -m 0755 bin/omniroute-cli "$target"; \
-      fi; \
-      "$target" --version; \
-      echo "Installed $target"
+    @dir="{{install_dir}}"; target="$dir/omniroute-cli"; \
+      if [ ! -d "$dir" ]; then mkdir -p "$dir" 2>/dev/null || sudo mkdir -p "$dir"; fi; \
+      if [ -w "$dir" ]; then install -m 0755 bin/omniroute-cli "$target"; else sudo install -m 0755 bin/omniroute-cli "$target"; fi; \
+      "$target" --version
 
-# Remove the installed CLI. Default: /usr/local/bin/omniroute-cli
 uninstall install_dir="/usr/local/bin":
     @target="{{install_dir}}/omniroute-cli"; \
-      if [ ! -e "$target" ]; then \
-        echo "$target is not installed"; \
-      elif [ -w "$target" ] || [ -w "{{install_dir}}" ]; then \
-        rm -f "$target"; \
-        echo "Removed $target"; \
-      else \
-        sudo rm -f "$target"; \
-        echo "Removed $target"; \
-      fi
+      if [ ! -e "$target" ]; then echo "$target is not installed"; \
+      elif [ -w "$target" ] || [ -w "{{install_dir}}" ]; then rm -f "$target"; \
+      else sudo rm -f "$target"; fi
 
-# Run the freshly built Go CLI. Example: just cli status
 cli *args: build
     ./bin/omniroute-cli {{args}}
 
-# Validate the existing Docker Compose configuration; does not create .env
-config:
-    docker compose config
-
-# Pull images and create/start the complete stack; creates .env if missing
-up: init
-    docker compose pull ai-tools-omniroute
-    docker compose pull ai-tools-omniroute-openwebui
-    docker compose up -d --remove-orphans
-
-# Alias for up
+# Runtime commands delegate to the Go CLI so lifecycle semantics have one source of truth.
+init: build
+    ./bin/omniroute-cli init
+up: build
+    ./bin/omniroute-cli up
 run: up
-
-# Start already-created containers
-start:
-    docker compose start
-
-# Stop containers without removing them
-stop:
-    docker compose stop
-
-# Restart all services
-restart:
-    docker compose restart
-
-# Stop/remove containers and network; keep persistent volumes
-down:
-    docker compose down --remove-orphans
-
-# Show service/container status
-status:
-    docker compose ps
-
-# Show images used by the stack
-images:
-    docker compose images
-
-# Show processes inside the containers
-top:
-    docker compose top
-
-# Follow logs. Example: just logs ai-tools-omniroute
-logs service="":
-    @if [ -n "{{service}}" ]; then \
-        docker compose logs --tail=200 -f "{{service}}"; \
-    else \
-        docker compose logs --tail=200 -f; \
-    fi
-
-# Show the last 200 log lines
-log service="":
-    @if [ -n "{{service}}" ]; then \
-        docker compose logs --tail=200 "{{service}}"; \
-    else \
-        docker compose logs --tail=200; \
-    fi
-
-# Pull latest service images separately for clearer errors
-pull: init
-    docker compose pull ai-tools-omniroute
-    docker compose pull ai-tools-omniroute-openwebui
-
-# Pull images and recreate containers without an explicit down; keep persistent volumes
-update: init
-    docker compose pull ai-tools-omniroute
-    docker compose pull ai-tools-omniroute-openwebui
-    docker compose up -d --force-recreate --remove-orphans
-    docker compose ps
-
-# Force recreation without pulling images
-recreate: init
-    docker compose up -d --force-recreate --remove-orphans
-
-# Open a shell in OmniRoute
-shell-omniroute:
-    docker compose exec ai-tools-omniroute sh
-
-# Open a shell in Open WebUI
-shell-openwebui:
-    docker compose exec ai-tools-omniroute-openwebui sh
-
-# Print configured public URLs without creating .env
-urls:
-    @if [ -f .env ]; then . ./.env; fi; \
-      echo "OmniRoute:  http://localhost:${OMNIROUTE_PUBLIC_PORT:-20128}"; \
-      echo "Open WebUI: http://localhost:${OPENWEBUI_PUBLIC_PORT:-20000}"
-
-# Show resolved Compose service names
-services:
-    docker compose config --services
-
-# Show the exact images Compose resolves after applying .env
-resolved-images:
-    docker compose config --images
-
-# Build CLI and run security/config diagnostics
+pull: build
+    ./bin/omniroute-cli pull
+update: build
+    ./bin/omniroute-cli update
+update-plan: build
+    ./bin/omniroute-cli update --plan
+rollback: build
+    ./bin/omniroute-cli rollback --previous
+recreate: build
+    ./bin/omniroute-cli recreate
+start: build
+    ./bin/omniroute-cli start
+stop: build
+    ./bin/omniroute-cli stop
+restart: build
+    ./bin/omniroute-cli restart
+down: build
+    ./bin/omniroute-cli down
+status: build
+    ./bin/omniroute-cli status
+health: build
+    ./bin/omniroute-cli health
+health-deep: build
+    ./bin/omniroute-cli health --deep
 doctor: build
-    ./bin/omniroute-cli doctor
+    ./bin/omniroute-cli doctor --deep
+config: build
+    ./bin/omniroute-cli config validate
+images: build
+    ./bin/omniroute-cli images
+top: build
+    ./bin/omniroute-cli top
+logs: build
+    ./bin/omniroute-cli logs
+log: build
+    ./bin/omniroute-cli log
+urls: build
+    ./bin/omniroute-cli urls
+clean: build
+    ./bin/omniroute-cli clean
+prune: build
+    ./bin/omniroute-cli prune
+clean-all: build
+    ./bin/omniroute-cli clean-all --yes
 
-# Back up both persistent data volumes
+# Existing volume backup helpers are retained as developer conveniences only.
+# Backup/restore is intentionally not part of omniroute-cli.
 backup: backup-omniroute backup-openwebui
-
-# Back up OmniRoute data to ./backups
 backup-omniroute:
     @mkdir -p backups
-    docker run --rm \
-        -v ai-tools-omniroute-data:/data:ro \
-        -v "${PWD}/backups:/backup" \
-        alpine:latest \
-        sh -c 'tar czf /backup/ai-tools-omniroute-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
-
-# Back up Open WebUI data to ./backups
+    docker run --rm -v ai-tools-omniroute-data:/data:ro -v "${PWD}/backups:/backup" alpine:latest sh -c 'tar czf /backup/ai-tools-omniroute-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
 backup-openwebui:
     @mkdir -p backups
-    docker run --rm \
-        -v ai-tools-omniroute-openwebui-data:/data:ro \
-        -v "${PWD}/backups:/backup" \
-        alpine:latest \
-        sh -c 'tar czf /backup/ai-tools-omniroute-openwebui-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
+    docker run --rm -v ai-tools-omniroute-openwebui-data:/data:ro -v "${PWD}/backups:/backup" alpine:latest sh -c 'tar czf /backup/ai-tools-omniroute-openwebui-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .'
 
-# Remove containers/network only; KEEP volumes and unrelated Docker images
-clean:
-    docker compose down --remove-orphans
-
-# Explicit global Docker image prune
-prune:
-    docker image prune -f
-
-# Remove containers, network AND persistent volumes. DELETES ALL APPLICATION DATA.
-clean-all:
-    @printf 'This deletes all ai-tools-omniroute data. Type DELETE to continue: '; \
-    read answer; \
-    if [ "$answer" = "DELETE" ]; then \
-        docker compose down -v --remove-orphans; \
-    else \
-        echo "Cancelled"; \
-        exit 1; \
-    fi
-
-# Create a reproducible ZIP from committed Git files only
 release: check
-    @git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "release requires a Git checkout" >&2; exit 1; }
-    @git diff --quiet && git diff --cached --quiet || { echo "Commit tracked changes before creating a release" >&2; exit 1; }
-    @version="$(cat VERSION)"; \
-      mkdir -p dist; \
-      archive="dist/omniroute-cli-v$version.zip"; \
-      rm -f "$archive"; \
+    @git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "release requires Git" >&2; exit 1; }
+    @git diff --quiet && git diff --cached --quiet || { echo "Commit tracked changes before release" >&2; exit 1; }
+    @version="$(go run ./cmd/semver-check "$(cat VERSION)")"; \
+      mkdir -p dist; archive="dist/omniroute-cli-v$version.zip"; rm -f "$archive"; \
       git archive --format=zip --prefix="omniroute-cli-v$version/" --output="$archive" HEAD; \
-      unzip -t "$archive" >/dev/null; \
-      echo "Created $archive"
+      unzip -t "$archive" >/dev/null; shasum -a 256 "$archive"

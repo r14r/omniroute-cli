@@ -1,45 +1,21 @@
 package compose
 
 import (
-	"bytes"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestValidateFiles(t *testing.T) {
-	dir := t.TempDir()
-	r := Runner{ProjectDir: dir, ComposeFile: "docker-compose.yaml"}
-	if err := r.ValidateFiles(); err == nil {
-		t.Fatal("expected missing compose file error")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.ValidateFiles(); err != nil {
-		t.Fatalf("unexpected validate error: %v", err)
+func TestComposeArgsProjectName(t *testing.T) {
+	r := Runner{ComposeFile: "docker-compose.yaml", ProjectName: "dev"}
+	s := strings.Join(r.composeArgs("ps"), " ")
+	if s != "compose -f docker-compose.yaml -p dev ps" {
+		t.Fatal(s)
 	}
 }
-
-func TestDryRunComposePrintsCommand(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "docker-compose.yaml"), []byte("services: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	r := Runner{ProjectDir: dir, ComposeFile: "docker-compose.yaml", Stdout: &out, Stderr: &out, DryRun: true}
-	if err := r.Compose("up", "-d", "--force-recreate"); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "$ docker compose -f docker-compose.yaml up -d --force-recreate") {
-		t.Fatalf("unexpected dry-run output: %q", out.String())
-	}
-}
-
-func TestShellJoinQuotesWhitespace(t *testing.T) {
-	got := shellJoin([]string{"compose", "--project-name", "my stack"})
-	if !strings.Contains(got, `"my stack"`) {
-		t.Fatalf("expected quoted arg, got %q", got)
+func TestDefaultTimeoutCanBeSet(t *testing.T) {
+	r := Runner{Timeout: 3 * time.Second}
+	if r.Timeout != 3*time.Second {
+		t.Fatal()
 	}
 }

@@ -9,44 +9,80 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-
       - name: Validate semantic version
-        shell: bash
-        run: |
-          VERSION="$(cat VERSION)"
-          echo "${VERSION}" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-
+        run: go run ./cmd/semver-check "$(cat VERSION)"
       - name: Check formatting
         shell: bash
         run: |
           FILES="$(gofmt -l ./cmd ./src)"
-          test -z "${FILES}" || { echo "Files require gofmt:"; echo "${FILES}"; exit 1; }
-
+          test -z "$FILES" || { echo "Files require gofmt:"; echo "$FILES"; exit 1; }
       - name: Vet
         run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
+      - name: Race tests
+        run: go test -race ./...
       - name: Build
         shell: bash
         run: |
           mkdir -p bin
           VERSION="$(cat VERSION)"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o bin/omniroute-cli ./cmd/omniroute-cli
-
-      - name: CLI smoke test
+          ./bin/omniroute-cli --version | grep -F "v${VERSION}"
+      - name: Secure init smoke test
         shell: bash
         run: |
-          ./bin/omniroute-cli --help >/dev/null
-          ./bin/omniroute-cli --version | grep -F "v$(cat VERSION)"
+          ./bin/omniroute-cli init
+          test "$(stat -c %a .env 2>/dev/null || stat -f %Lp .env)" = "600"
+          ! grep -q '__GENERATE__' .env
+          ! grep -q '^OMNIROUTE_INITIAL_PASSWORD=123456$' .env
+      - name: Parse update-cli.yam
+        run: ruby -e 'require "yaml"; YAML.load_file("update-cli.yam")'
+
+  integration-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: extractions/setup-just@v3
+      - name: Load justfile
+        run: just --list >/dev/null
+      - name: Build CLI
+        run: just build
+      - name: Validate Compose
+        run: |
+          ./bin/omniroute-cli init
+          docker compose -f docker-compose.yaml config --quiet
+      - name: Dry-run lifecycle matrix
+        run: |
+          ./bin/omniroute-cli --dry-run status
+          ./bin/omniroute-cli --dry-run update --plan --json
+          ./bin/omniroute-cli --dry-run recreate
+
+  vulnerability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2

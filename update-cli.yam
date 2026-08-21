@@ -3,7 +3,7 @@ schemaVersion: 2
 project:
   name: ai-tools-omniroute
   type: docker-compose
-  description: Build omniroute-cli, securely initialize configuration, pull images and recreate the ai-tools-omniroute stack.
+  description: Build and operate OmniRoute/Open WebUI through the authoritative omniroute-cli Go application.
 
 defaults:
   timeout: 20m
@@ -11,63 +11,45 @@ defaults:
 
 requirements:
   commands:
-    - docker
     - go
+    - docker
 
 workflows:
   setup:
-    tasks: [build-cli, rebuild]
+    tasks: [update-stack]
   update:
-    tasks: [build-cli, rebuild]
+    tasks: [update-stack]
   rebuild:
-    tasks: [rebuild]
+    tasks: [recreate-stack]
   build-cli:
     tasks: [build-cli]
   check-cli:
     tasks: [check-cli]
   pull:
-    tasks: [pull]
+    tasks: [pull-stack]
   start:
-    tasks: [start]
+    tasks: [start-stack]
   stop:
-    tasks: [stop]
+    tasks: [stop-stack]
   status:
-    tasks: [status]
+    tasks: [status-stack]
+  doctor:
+    tasks: [doctor-stack]
 
 tasks:
-  prepare-env:
-    steps:
-      - name: Securely initialize or protect .env
-        shell: |
-          VERSION="$(cat VERSION)"
-          go run -ldflags "-X main.version=${VERSION}" ./cmd/omniroute-cli init
-          chmod 600 .env
-
-  validate:
-    requires: [prepare-env]
-    steps:
-      - name: Validate Docker Compose configuration
-        dockerCompose:
-          action: config
-          args: [--quiet]
-
   check-cli:
     steps:
-      - name: Validate semantic version
+      - name: Validate semantic VERSION with Go SemVer parser
         shell: |
-          VERSION="$(cat VERSION)"
-          echo "${VERSION}" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'
-
+          go run ./cmd/semver-check "$(cat VERSION)" >/dev/null
       - name: Check Go formatting
         shell: |
           FILES="$(gofmt -l ./cmd ./src)"
           test -z "${FILES}" || { echo "Files require gofmt:"; echo "${FILES}"; exit 1; }
-
       - name: Run go vet
         command:
           exec: go
           args: [vet, ./...]
-
       - name: Run Go tests
         command:
           exec: go
@@ -78,55 +60,56 @@ tasks:
     steps:
       - name: Create binary directory
         mkdir: bin
-
       - name: Build omniroute-cli
         shell: |
           VERSION="$(cat VERSION)"
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o bin/omniroute-cli ./cmd/omniroute-cli
+          ./bin/omniroute-cli --version
 
-  pull:
-    requires: [validate]
+  init-stack:
+    requires: [build-cli]
     steps:
-      - name: Pull OmniRoute image
-        dockerCompose:
-          action: pull
-          args: [ai-tools-omniroute]
+      - name: Initialize secure environment
+        shell: ./bin/omniroute-cli init
 
-      - name: Pull Open WebUI image
-        dockerCompose:
-          action: pull
-          args: [ai-tools-omniroute-openwebui]
-
-  rebuild:
-    requires: [pull]
+  pull-stack:
+    requires: [build-cli]
     steps:
-      - name: Recreate and start containers without explicit downtime
-        dockerCompose:
-          action: up
-          detach: true
-          removeOrphans: true
-          args: [--force-recreate]
+      - name: Pull configured images through omniroute-cli
+        shell: ./bin/omniroute-cli --timeout 15m pull
 
-      - name: Show container status
-        dockerCompose:
-          action: ps
+  update-stack:
+    requires: [build-cli]
+    steps:
+      - name: Transactional image update with health verification and rollback
+        shell: ./bin/omniroute-cli --timeout 15m update --wait 2m
 
-  start:
-    requires: [validate]
+  recreate-stack:
+    requires: [build-cli]
+    steps:
+      - name: Recreate stack without pulling
+        shell: ./bin/omniroute-cli --timeout 5m recreate
+
+  start-stack:
+    requires: [build-cli]
     steps:
       - name: Start existing containers
-        dockerCompose:
-          action: start
+        shell: ./bin/omniroute-cli start
 
-  stop:
+  stop-stack:
+    requires: [build-cli]
     steps:
       - name: Stop containers
-        dockerCompose:
-          action: stop
+        shell: ./bin/omniroute-cli stop
 
-  status:
-    requires: [validate]
+  status-stack:
+    requires: [build-cli]
     steps:
-      - name: Show container status
-        dockerCompose:
-          action: ps
+      - name: Show rich application status
+        shell: ./bin/omniroute-cli status
+
+  doctor-stack:
+    requires: [build-cli]
+    steps:
+      - name: Run deep diagnostics
+        shell: ./bin/omniroute-cli doctor --deep
