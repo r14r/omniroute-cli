@@ -22,19 +22,59 @@ type Runner struct {
 	Env                                  map[string]string
 }
 
+var composeFileCandidates = []string{"docker-compose.yaml", "docker-compose.yml", "compose.yaml", "compose.yml"}
+
+func isStandardComposeFile(name string) bool {
+	base := filepath.Base(name)
+	for _, candidate := range composeFileCandidates {
+		if base == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func (r Runner) ResolveComposeFile() (string, error) {
+	requested := strings.TrimSpace(r.ComposeFile)
+	if requested != "" {
+		path := requested
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(r.ProjectDir, path)
+		}
+		info, err := os.Stat(path)
+		if err == nil {
+			if info.IsDir() {
+				return "", fmt.Errorf("compose file %s is a directory", path)
+			}
+			return requested, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || !isStandardComposeFile(requested) {
+			return "", fmt.Errorf("compose file %s: %w", path, err)
+		}
+	}
+
+	for _, name := range composeFileCandidates {
+		if name == requested {
+			continue
+		}
+		path := filepath.Join(r.ProjectDir, name)
+		info, err := os.Stat(path)
+		if err == nil {
+			if info.IsDir() {
+				continue
+			}
+			return name, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("compose file %s: %w", path, err)
+		}
+	}
+	return "", fmt.Errorf("no Docker Compose file found in %s (tried %s)", r.ProjectDir, strings.Join(composeFileCandidates, ", "))
+}
+
 func (r Runner) ValidateFiles() error {
-	path := r.ComposeFile
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(r.ProjectDir, path)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("compose file %s: %w", path, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("compose file %s is a directory", path)
-	}
-	return nil
+	_, err := r.ResolveComposeFile()
+	return err
 }
 func (r Runner) CheckDocker() error {
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -42,17 +82,31 @@ func (r Runner) CheckDocker() error {
 	}
 	return nil
 }
-func (r Runner) CheckCompose() error          { return r.Run("compose", "version") }
-func (r Runner) Compose(args ...string) error { return r.Run(r.composeArgs(args...)...) }
-func (r Runner) ComposeOutput(args ...string) (string, error) {
-	return r.Output(r.composeArgs(args...)...)
+func (r Runner) CheckCompose() error { return r.Run("compose", "version") }
+func (r Runner) Compose(args ...string) error {
+	full, err := r.composeArgs(args...)
+	if err != nil {
+		return err
+	}
+	return r.Run(full...)
 }
-func (r Runner) composeArgs(args ...string) []string {
-	full := []string{"compose", "-f", r.ComposeFile}
+func (r Runner) ComposeOutput(args ...string) (string, error) {
+	full, err := r.composeArgs(args...)
+	if err != nil {
+		return "", err
+	}
+	return r.Output(full...)
+}
+func (r Runner) composeArgs(args ...string) ([]string, error) {
+	file, err := r.ResolveComposeFile()
+	if err != nil {
+		return nil, err
+	}
+	full := []string{"compose", "-f", file}
 	if r.ProjectName != "" {
 		full = append(full, "-p", r.ProjectName)
 	}
-	return append(full, args...)
+	return append(full, args...), nil
 }
 func (r Runner) Run(args ...string) error              { _, err := r.run(false, args...); return err }
 func (r Runner) Output(args ...string) (string, error) { return r.run(true, args...) }

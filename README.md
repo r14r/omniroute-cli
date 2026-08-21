@@ -1,6 +1,6 @@
 # omniroute-cli
 
-Current release: **v0.6.0**
+Current release: **v0.6.1**
 
 `omniroute-cli` is a Go operations CLI and Docker Compose stack for running **OmniRoute** together with **Open WebUI**. The Go CLI is the authoritative runtime control plane; the `justfile` and `update-cli.yam` delegate operational behavior to it to avoid lifecycle drift.
 
@@ -14,7 +14,14 @@ omniroute-cli up
 omniroute-cli status
 ```
 
-`just install` installs to `/usr/local/bin/omniroute-cli` by default.
+`just install` installs to `/usr/local/bin/omniroute-cli` by default. Verify the binary actually used by your shell with:
+
+```bash
+command -v omniroute-cli
+omniroute-cli --version
+```
+
+If an older installed binary still looks for `compose.yaml`, rebuild and reinstall the current CLI with `just install`. Since v0.6.1, the CLI resolves standard Compose filenames compatibly in this order: `docker-compose.yaml`, `docker-compose.yml`, `compose.yaml`, `compose.yml`. A custom `--compose-file` path remains authoritative and fails if that file is missing.
 
 ## Semantic Versioning
 
@@ -23,7 +30,7 @@ Project and build versions follow Semantic Versioning. Runtime code does not com
 `VERSION` currently contains:
 
 ```text
-0.6.0
+0.6.1
 ```
 
 Build scripts validate it through the same Go SemVer implementation:
@@ -52,7 +59,7 @@ Global options may be placed before or after the command:
 
 ```text
 --project-dir DIR       project directory, default .
---compose-file FILE     default docker-compose.yaml
+--compose-file FILE     auto-detect; prefers docker-compose.yaml
 --project-name NAME     Compose project/container/volume prefix
 --prefix NAME           alias for --project-name
 --timeout DURATION      per-operation timeout, default 2m
@@ -288,7 +295,7 @@ update-cli --setup-manifest update-cli.yam --setup-workflow status
 update-cli --setup-manifest update-cli.yam --setup-workflow doctor
 ```
 
-The manifest no longer duplicates Docker lifecycle behavior. It builds `omniroute-cli` and delegates update/start/stop/status/doctor operations to the binary.
+The manifest no longer duplicates Docker lifecycle behavior. It builds `omniroute-cli` and delegates update/start/stop/status/doctor operations to the binary. The `setup`/`update` workflow also installs the freshly built binary to `/usr/local/bin/omniroute-cli` before updating the stack, preventing an older CLI on `PATH` from surviving a project release.
 
 ## CI
 
